@@ -24,22 +24,39 @@ AgentSkills/
 
 ## Quick Start
 
-### 1. Build the Image
+### 1. Configure Environment
+
+```bash
+# Copy the example env file
+cp .env.example .env
+
+# Edit .env and add your API key
+# ANTHROPIC_API_KEY=your_api_key_here
+```
+
+### 2. Build the Image
 
 ```bash
 docker build -t claude-agent-dev .
 ```
 
-### 2. Run the Container
+### 3. Run the Container
 
 ```bash
+# Option A: Use .env file
+docker run -d --rm \
+  -p 8080:8080 \
+  --env-file .env \
+  claude-agent-dev
+
+# Option B: Pass environment variable directly
 docker run -d --rm \
   -p 8080:8080 \
   -e ANTHROPIC_API_KEY=your_api_key_here \
   claude-agent-dev
 ```
 
-### 3. Test the API
+### 4. Test the API
 
 Health check:
 ```bash

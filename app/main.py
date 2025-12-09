@@ -32,8 +32,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, List
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+
+# Load environment variables from .env file
+# Looks for .env in current directory, then parent directories
+load_dotenv()
+
+# Also try to load from parent directory (when running from app/)
+env_path = Path(__file__).parent.parent / ".env"
+if env_path.exists():
+    load_dotenv(env_path)
 
 
 def setup_skills_directory():

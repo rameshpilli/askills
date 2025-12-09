@@ -163,3 +163,31 @@ Option B: Persistent or config driven skills
 - From there the Agent SDK loads SKILL.md and executes tools inside the pod
 
 Deploy this container to Kubernetes as a standard Deployment. The pod becomes your "VM style" runtime. Skills execute inside the pod container on the cluster node.
+
+
+
+
+You end up with two possible deployments:
+
+### Local
+
+You run the Docker container on your laptop.
+The Linux image inside the container becomes your small Linux runtime.
+Skills run inside that container.
+
+### Cluster
+
+You deploy the same Docker image into a Kubernetes pod.
+The pod is your runtime environment.
+Skills run inside the pod.
+
+This avoids requesting a dedicated VM from infra.
+
+Only ask for a VM when:
+
+* You want a long-lived host outside Kubernetes.
+* You need direct OS control.
+* Your platform policy does not allow long-running agent workloads in Kubernetes.
+* You plan to add local storage or special networking.
+
+For testing and early dev this container based setup covers everything.

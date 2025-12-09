@@ -75,7 +75,34 @@ From [anthropics/skills](https://github.com/anthropics/skills):
 
 ## How It Works
 
-All skill execution happens inside the container. Only API calls go out.
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Your MacBook (Host)                                        │
+│                                                             │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │  Docker Desktop                                       │  │
+│  │                                                       │  │
+│  │  ┌─────────────────────────────────────────────────┐  │  │
+│  │  │  Container (python:3.11-slim)                   │  │  │
+│  │  │                                                 │  │  │
+│  │  │  • Python 3.11                                  │  │  │
+│  │  │  • Claude Agent SDK                             │  │  │
+│  │  │  • main.py (your entrypoint)                    │  │  │
+│  │  │  • /app/.claude/skills/* (skill definitions)    │  │  │
+│  │  │  • /bin/bash (for Bash tool)                    │  │  │
+│  │  │                                                 │  │  │
+│  │  │  Skills execute HERE                            │  │  │
+│  │  └──────────────────┬──────────────────────────────┘  │  │
+│  └─────────────────────┼─────────────────────────────────┘  │
+└────────────────────────┼────────────────────────────────────┘
+                         │
+                         │ HTTPS (API calls only)
+                         ▼
+              ┌─────────────────────┐
+              │  Claude API         │
+              │  (or your gateway)  │
+              └─────────────────────┘
+```
 
 **What stays inside the container:**
 - Skill loading (reading SKILL.md)
@@ -87,7 +114,7 @@ All skill execution happens inside the container. Only API calls go out.
 **What goes outside:**
 - Only the API calls to Claude (model inference)
 
-The container is the isolated Linux environment where all skill execution happens.
+The container is the isolated Linux environment where all skill execution happens. No Anthropic VM involved in this setup.
 
 ## Kubernetes Deployment
 
@@ -95,7 +122,7 @@ Running this image in a Kubernetes pod works for skills. The pod + container tog
 
 **Layers:**
 ```
-Host node → Kubernetes pod → Docker container → Python + Agent SDK + skills
+Host node → Kubernetes pod → Docker container → Python + Agent SDK + SKILL.md + bash
 ```
 
 Skills run inside that container filesystem exactly like on your laptop.
@@ -115,14 +142,15 @@ Skills run inside that container filesystem exactly like on your laptop.
 Option A: Immutable skills baked into image
 - Good for quick tests
 - Build a new image when you update skills
+- No extra volume needed
 
 Option B: Persistent or config driven skills
-- Use a PersistentVolumeClaim or ConfigMap to mount skills
+- Use a PersistentVolumeClaim or ConfigMap to mount skills into `/app/skills` or `/app/.claude/skills`
 - Update skills without rebuilding the image
 
 **4. Network**
-- Cluster nodes need outbound HTTPS to Anthropic or your LLM gateway
-- No inbound internet required unless you expose an HTTP API
+- Cluster nodes need outbound HTTPS to Anthropic or your internal LLM gateway
+- No inbound internet required unless you expose an HTTP API for the agent
 
 **5. Resources**
 - Start with: `requests: 1 CPU, 2-4 GB RAM`
@@ -130,6 +158,8 @@ Option B: Persistent or config driven skills
 - Adjust after observing load
 
 **6. Pod lifecycle**
-- Pod starts → `python main.py` runs
-- main.py sets up skills directory and starts the agent
-- Agent SDK loads SKILL.md and executes tools inside the pod
+- When the pod starts, Dockerfile CMD runs `python main.py`
+- main.py sets cwd to `/app`, wires `setting_sources`, `allowed_tools`, and points skills to `/app/.claude/skills`
+- From there the Agent SDK loads SKILL.md and executes tools inside the pod
+
+Deploy this container to Kubernetes as a standard Deployment. The pod becomes your "VM style" runtime. Skills execute inside the pod container on the cluster node.

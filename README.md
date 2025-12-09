@@ -75,72 +75,61 @@ From [anthropics/skills](https://github.com/anthropics/skills):
 
 ## How It Works
 
-```
-┌─────────────────────────────────────────────┐
-│  Docker Container                           │
-│  ┌───────────────────────────────────────┐  │
-│  │  Python 3.11 + Claude Agent SDK       │  │
-│  │  main.py → loads skills from          │  │
-│  │            /app/.claude/skills/       │  │
-│  │                                       │  │
-│  │  Skills execute HERE (Bash, Python)   │  │
-│  └───────────────────┬───────────────────┘  │
-└──────────────────────┼──────────────────────┘
-                       │ HTTPS only
-                       ▼
-              Claude API / Gateway
-```
-
 All skill execution happens inside the container. Only API calls go out.
 
-
-┌─────────────────────────────────────────────────────────────┐
-│  Your MacBook (Host)                                        │
-│                                                             │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │  Docker Desktop                                       │  │
-│  │                                                       │  │
-│  │  ┌─────────────────────────────────────────────────┐  │  │
-│  │  │  Container (python:3.11-slim)                   │  │  │
-│  │  │                                                 │  │  │
-│  │  │  • Python 3.11                                  │  │  │
-│  │  │  • Claude Agent SDK                             │  │  │
-│  │  │  • main.py (your entrypoint)                    │  │  │
-│  │  │  • /app/.claude/skills/* (skill definitions)    │  │  │
-│  │  │  • /bin/bash (for Bash tool)                    │  │  │
-│  │  │                                                 │  │  │
-│  │  │  Skills execute HERE                            │  │  │
-│  │  └──────────────────┬──────────────────────────────┘  │  │
-│  └─────────────────────┼─────────────────────────────────┘  │
-└────────────────────────┼────────────────────────────────────┘
-                         │
-                         │ HTTPS (API calls only)
-                         ▼
-              ┌─────────────────────┐
-              │  Claude API         │
-              │  (or your gateway)  │
-              └─────────────────────┘
-
-What stays inside the container:
+**What stays inside the container:**
 - Skill loading (reading SKILL.md)
 - Bash commands
 - File read/write operations
 - Python script execution
 - All filesystem access
 
-What goes outside:
+**What goes outside:**
 - Only the API calls to Claude (model inference)
 
-- The container is our isolated Linux environment where all skill execution happens. No Anthropic VM involved in this setup.
+The container is the isolated Linux environment where all skill execution happens.
 
+## Kubernetes Deployment
 
-- Running this image in a Kubernetes pod works for skills. The pod + container together act as your “VM”.
+Running this image in a Kubernetes pod works for skills. The pod + container together act as your "VM".
 
-Think of the layers:
-
-Host node
-→ Kubernetes pod
-→ Your Docker container
-→ Python + Agent SDK + SKILL.md + bash
+**Layers:**
+```
+Host node → Kubernetes pod → Docker container → Python + Agent SDK + skills
+```
 
 Skills run inside that container filesystem exactly like on your laptop.
+
+### Key pieces for Kubernetes:
+
+**1. Image**
+- Build and push your image to your registry
+- Use that image in a Deployment spec
+
+**2. Environment variables**
+- Set `ANTHROPIC_API_KEY` or gateway variables through a Secret
+- Mount them as env vars in the pod
+
+**3. Filesystem for skills**
+
+Option A: Immutable skills baked into image
+- Good for quick tests
+- Build a new image when you update skills
+
+Option B: Persistent or config driven skills
+- Use a PersistentVolumeClaim or ConfigMap to mount skills
+- Update skills without rebuilding the image
+
+**4. Network**
+- Cluster nodes need outbound HTTPS to Anthropic or your LLM gateway
+- No inbound internet required unless you expose an HTTP API
+
+**5. Resources**
+- Start with: `requests: 1 CPU, 2-4 GB RAM`
+- Limits: `2-4 CPU, 8-16 GB RAM`
+- Adjust after observing load
+
+**6. Pod lifecycle**
+- Pod starts → `python main.py` runs
+- main.py sets up skills directory and starts the agent
+- Agent SDK loads SKILL.md and executes tools inside the pod

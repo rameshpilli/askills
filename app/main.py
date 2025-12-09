@@ -9,6 +9,7 @@ This script:
 
 Endpoints:
 - POST /chat - Send a message to the agent, get a reply
+- POST /chat/verbose - Send a message with step-by-step execution logs
 - GET /health - Health check endpoint
 
 Skills Wiring:
@@ -24,10 +25,12 @@ Environment Variables:
 """
 
 import asyncio
+import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -110,6 +113,22 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     reply: str
+
+
+class ExecutionStep(BaseModel):
+    step: int
+    timestamp: str
+    type: str  # "text", "tool_use", "tool_result", "thinking"
+    content: str
+    tool_name: Optional[str] = None
+    tool_input: Optional[dict] = None
+
+
+class VerboseChatResponse(BaseModel):
+    reply: str
+    steps: List[ExecutionStep]
+    total_steps: int
+    tools_used: List[str]
 
 
 class HealthResponse(BaseModel):
@@ -230,6 +249,129 @@ async def chat(req: ChatRequest) -> ChatResponse:
     full_reply = "".join(reply_chunks) if reply_chunks else "No response from agent"
 
     return ChatResponse(reply=full_reply)
+
+
+@app.post("/chat/verbose", response_model=VerboseChatResponse)
+async def chat_verbose(req: ChatRequest) -> VerboseChatResponse:
+    """
+    Send a message to the Claude agent with detailed step-by-step execution logs.
+
+    Returns:
+    - reply: The final response text
+    - steps: Array of execution steps showing model decisions, tool usage, etc.
+    - total_steps: Total number of execution steps
+    - tools_used: List of tools/skills that were invoked
+    """
+    from claude_agent_sdk import (
+        query,
+        AssistantMessage,
+        TextBlock,
+        ToolUseBlock,
+        ToolResultBlock,
+        ThinkingBlock,
+    )
+
+    if not agent_options:
+        raise HTTPException(status_code=503, detail="Agent not initialized")
+
+    # Check for API key
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    gateway_url = os.environ.get("LLM_GATEWAY_URL")
+
+    if not api_key and not gateway_url:
+        raise HTTPException(
+            status_code=500,
+            detail="ANTHROPIC_API_KEY or LLM_GATEWAY_URL environment variable not set"
+        )
+
+    # Collect response and execution steps
+    reply_chunks: list[str] = []
+    steps: list[ExecutionStep] = []
+    tools_used: list[str] = []
+    step_num = 0
+
+    def add_step(step_type: str, content: str, tool_name: str = None, tool_input: dict = None):
+        nonlocal step_num
+        step_num += 1
+        steps.append(ExecutionStep(
+            step=step_num,
+            timestamp=datetime.now().isoformat(),
+            type=step_type,
+            content=content,
+            tool_name=tool_name,
+            tool_input=tool_input,
+        ))
+        # Also print to console for real-time visibility
+        print(f"[Step {step_num}] [{step_type.upper()}] {content[:200]}{'...' if len(content) > 200 else ''}")
+
+    try:
+        print("\n" + "=" * 60)
+        print(f"[Query] {req.message}")
+        print("=" * 60)
+
+        async for msg in query(prompt=req.message, options=agent_options):
+            if isinstance(msg, AssistantMessage):
+                for block in msg.content:
+                    if isinstance(block, TextBlock):
+                        reply_chunks.append(block.text)
+                        add_step(
+                            step_type="text",
+                            content=block.text[:500] + ("..." if len(block.text) > 500 else "")
+                        )
+
+                    elif isinstance(block, ToolUseBlock):
+                        tool_name = block.name
+                        tool_input = block.input if hasattr(block, 'input') else {}
+
+                        # Track tools used
+                        if tool_name not in tools_used:
+                            tools_used.append(tool_name)
+
+                        # Format input for display
+                        input_str = json.dumps(tool_input, indent=2) if tool_input else "{}"
+                        if len(input_str) > 300:
+                            input_str = input_str[:300] + "..."
+
+                        add_step(
+                            step_type="tool_use",
+                            content=f"Invoking tool: {tool_name}",
+                            tool_name=tool_name,
+                            tool_input=tool_input if len(json.dumps(tool_input)) < 1000 else {"truncated": True}
+                        )
+
+                    elif isinstance(block, ToolResultBlock):
+                        result_content = str(block.content) if hasattr(block, 'content') else "Result received"
+                        if len(result_content) > 500:
+                            result_content = result_content[:500] + "..."
+
+                        add_step(
+                            step_type="tool_result",
+                            content=result_content
+                        )
+
+                    elif isinstance(block, ThinkingBlock):
+                        thinking = block.thinking if hasattr(block, 'thinking') else str(block)
+                        add_step(
+                            step_type="thinking",
+                            content=thinking[:500] + ("..." if len(thinking) > 500 else "")
+                        )
+
+        print("=" * 60)
+        print(f"[Done] Total steps: {step_num}, Tools used: {tools_used}")
+        print("=" * 60 + "\n")
+
+    except Exception as e:
+        add_step(step_type="error", content=str(e))
+        raise HTTPException(status_code=500, detail=f"Agent error: {str(e)}")
+
+    full_reply = "".join(reply_chunks) if reply_chunks else "No response from agent"
+
+    return VerboseChatResponse(
+        reply=full_reply,
+        steps=steps,
+        total_steps=step_num,
+        tools_used=tools_used,
+    )
 
 
 if __name__ == "__main__":

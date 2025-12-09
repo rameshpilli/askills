@@ -66,6 +66,7 @@ curl http://localhost:8080/chat \
 |----------|--------|-------------|
 | `/health` | GET | Health check, returns skills count |
 | `/chat` | POST | Send message to agent, get reply |
+| `/chat/verbose` | POST | Send message with step-by-step execution logs |
 
 ### POST /chat
 
@@ -81,6 +82,70 @@ Response:
 {
   "reply": "Agent response text"
 }
+```
+
+### POST /chat/verbose
+
+Use this endpoint to see exactly how the model picks skills and executes them.
+
+Request:
+```json
+{
+  "message": "Analyze the earnings PDF in testdata/"
+}
+```
+
+Response:
+```json
+{
+  "reply": "The Q3 2024 earnings report shows...",
+  "steps": [
+    {
+      "step": 1,
+      "timestamp": "2024-12-08T20:30:00",
+      "type": "tool_use",
+      "content": "Invoking tool: Skill",
+      "tool_name": "Skill",
+      "tool_input": {"skill": "pdf"}
+    },
+    {
+      "step": 2,
+      "timestamp": "2024-12-08T20:30:01",
+      "type": "tool_use",
+      "content": "Invoking tool: Read",
+      "tool_name": "Read",
+      "tool_input": {"file_path": "/app/testdata/earnings_report_q3_2024.pdf"}
+    },
+    {
+      "step": 3,
+      "timestamp": "2024-12-08T20:30:02",
+      "type": "tool_result",
+      "content": "PDF content extracted: TechCorp Inc Q3 2024..."
+    },
+    {
+      "step": 4,
+      "timestamp": "2024-12-08T20:30:03",
+      "type": "text",
+      "content": "The Q3 2024 earnings report shows revenue of $2.4B..."
+    }
+  ],
+  "total_steps": 4,
+  "tools_used": ["Skill", "Read"]
+}
+```
+
+**Step types:**
+- `tool_use` - Model decided to invoke a tool/skill
+- `tool_result` - Output from executing the tool
+- `text` - Model's text response
+- `thinking` - Model's reasoning (if extended thinking enabled)
+- `error` - Error occurred during execution
+
+**Example curl:**
+```bash
+curl http://localhost:8080/chat/verbose \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Analyze the earnings PDF in testdata/"}' | jq
 ```
 
 ## Included Skills

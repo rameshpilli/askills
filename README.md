@@ -247,3 +247,49 @@ Only ask for a VM when:
 * You plan to add local storage or special networking.
 
 For testing and early dev this container based setup covers everything.
+
+## Example: Analyzing a PDF
+
+```bash
+curl http://localhost:8080/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Analyze the earnings PDF in testdata/"}'
+```
+
+**What happens when you run this:**
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│ 1. HTTP Request                                                          │
+│    curl POST /chat → FastAPI endpoint                                    │
+├──────────────────────────────────────────────────────────────────────────┤
+│ 2. Agent Query                                                           │
+│    FastAPI → Claude Agent SDK query(prompt)                              │
+├──────────────────────────────────────────────────────────────────────────┤
+│ 3. Model Decision                    ← HTTPS to Claude API               │
+│    Claude sees the prompt and decides: "I should use the pdf skill"      │
+├──────────────────────────────────────────────────────────────────────────┤
+│ 4. Skill Execution (inside container)                                    │
+│    Agent SDK invokes pdf skill:                                          │
+│    - Reads SKILL.md from /app/.claude/skills/pdf/                        │
+│    - Runs pdf2image to convert pages to images                           │
+│    - Extracts text and tables from PDF                                   │
+│    - All file I/O happens inside the container                           │
+├──────────────────────────────────────────────────────────────────────────┤
+│ 5. Skill Output → Claude             ← HTTPS to Claude API               │
+│    PDF content sent back to Claude for analysis                          │
+├──────────────────────────────────────────────────────────────────────────┤
+│ 6. Response Generation                                                   │
+│    Claude generates analysis: revenue, trends, key metrics               │
+├──────────────────────────────────────────────────────────────────────────┤
+│ 7. JSON Response                                                         │
+│    {"reply": "The Q3 2024 earnings report shows revenue of $2.4B..."}    │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+**Key points:**
+
+- Steps 3, 5, 6 are HTTPS calls to Claude API (or your gateway)
+- Step 4 runs entirely inside your container - no external calls
+- The PDF file never leaves your container
+- Only the extracted text/analysis goes to Claude

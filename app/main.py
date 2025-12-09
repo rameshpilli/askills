@@ -105,7 +105,7 @@ async def run_agent_loop():
     3. Prints responses to stdout
 
     The agent is configured to:
-    - Load skills from .claude/skills via setting_sources=["project"]
+    - Load skills from .claude/skills via setting_sources=["user", "project"]
     - Allow Skill, Read, Write, and Bash tools
     - Use the working directory from CLAUDE_AGENT_CWD
     """
@@ -137,14 +137,15 @@ async def run_agent_loop():
     cwd = os.environ.get("CLAUDE_AGENT_CWD", "/app")
 
     # Configure the agent
-    # setting_sources=["project"] enables loading skills from .claude/skills/
+    # setting_sources=["user", "project"] enables loading skills from .claude/skills/
     # allowed_tools includes Skill for invoking skills, plus Read/Write/Bash
     # for skills that need filesystem or shell access
     options = ClaudeAgentOptions(
         cwd=cwd,
-        # Load settings and skills from project directory
+        # Load settings and skills from both user and project directories
+        # "user" looks for ~/.claude/settings.json and ~/.claude/skills/
         # "project" looks for .claude/settings.json and .claude/skills/
-        setting_sources=["project"],
+        setting_sources=["user", "project"],
         # Tools available to the agent
         # - Skill: invoke custom skills from .claude/skills/
         # - Read: read files (required by many skills)

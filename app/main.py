@@ -17,33 +17,19 @@ Skills Wiring:
 - At runtime, this script creates symlinks from /app/.claude/skills/* to /app/skills/*
 - The Claude Agent SDK loads SKILL.md files from .claude/skills/
 
-Environment Variables:
-- ANTHROPIC_API_KEY: API key for Anthropic (required)
-- LLM_GATEWAY_URL: Optional custom gateway URL for internal deployments
-- CLAUDE_AGENT_CWD: Working directory for the agent (default: /app)
-- CLAUDE_AGENT_SKILLS_DIR: Source skills directory (default: /app/skills)
+Configuration:
+- All settings are loaded from app/config.py
+- Environment variables can be set via .env file
 """
 
-import asyncio
 import json
-import os
-import sys
 from datetime import datetime
-from pathlib import Path
 from typing import Optional, List
 
-from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-# Load environment variables from .env file
-# Looks for .env in current directory, then parent directories
-load_dotenv()
-
-# Also try to load from parent directory (when running from app/)
-env_path = Path(__file__).parent.parent / ".env"
-if env_path.exists():
-    load_dotenv(env_path)
+from config import config
 
 
 def setup_skills_directory():
@@ -66,12 +52,9 @@ def setup_skills_directory():
             └── skill-two/
                 └── SKILL.md
     """
-    cwd = os.environ.get("CLAUDE_AGENT_CWD", "/app")
-    skills_source = os.environ.get("CLAUDE_AGENT_SKILLS_DIR", "/app/skills")
-
-    claude_dir = Path(cwd) / ".claude"
-    claude_skills_dir = claude_dir / "skills"
-    skills_source_path = Path(skills_source)
+    claude_dir = config.get_claude_dir()
+    claude_skills_dir = config.get_claude_skills_dir()
+    skills_source_path = config.get_skills_source_path()
 
     # Ensure .claude directory exists
     claude_dir.mkdir(parents=True, exist_ok=True)
@@ -162,16 +145,11 @@ def init_agent_options():
     """Initialize Claude Agent options."""
     from claude_agent_sdk import ClaudeAgentOptions
 
-    cwd = os.environ.get("CLAUDE_AGENT_CWD", "/app")
-
     return ClaudeAgentOptions(
-        cwd=cwd,
-        # Load settings and skills from both user and project directories
-        setting_sources=["user", "project"],
-        # Tools available to the agent
-        allowed_tools=["Skill", "Read", "Write", "Bash", "Edit", "Glob", "Grep"],
-        # Accept file edits automatically
-        permission_mode="acceptEdits",
+        cwd=config.CLAUDE_AGENT_CWD,
+        setting_sources=config.SETTING_SOURCES,
+        allowed_tools=config.ALLOWED_TOOLS,
+        permission_mode=config.PERMISSION_MODE,
     )
 
 
@@ -189,8 +167,7 @@ async def startup_event():
     setup_skills_directory()
 
     # Count skills
-    cwd = os.environ.get("CLAUDE_AGENT_CWD", "/app")
-    claude_skills_dir = Path(cwd) / ".claude" / "skills"
+    claude_skills_dir = config.get_claude_skills_dir()
     if claude_skills_dir.exists():
         skills_count = len([d for d in claude_skills_dir.iterdir() if d.is_dir() or d.is_symlink()])
 
@@ -234,11 +211,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
     if not agent_options:
         raise HTTPException(status_code=503, detail="Agent not initialized")
 
-    # Check for API key
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    gateway_url = os.environ.get("LLM_GATEWAY_URL")
-
-    if not api_key and not gateway_url:
+    if not config.has_api_credentials():
         raise HTTPException(
             status_code=500,
             detail="ANTHROPIC_API_KEY or LLM_GATEWAY_URL environment variable not set"
@@ -284,11 +257,7 @@ async def chat_verbose(req: ChatRequest) -> VerboseChatResponse:
     if not agent_options:
         raise HTTPException(status_code=503, detail="Agent not initialized")
 
-    # Check for API key
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    gateway_url = os.environ.get("LLM_GATEWAY_URL")
-
-    if not api_key and not gateway_url:
+    if not config.has_api_credentials():
         raise HTTPException(
             status_code=500,
             detail="ANTHROPIC_API_KEY or LLM_GATEWAY_URL environment variable not set"
@@ -386,4 +355,4 @@ async def chat_verbose(req: ChatRequest) -> VerboseChatResponse:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8080)
+    uvicorn.run("main:app", host=config.HOST, port=config.PORT)

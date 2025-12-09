@@ -145,12 +145,18 @@ def init_agent_options():
     """Initialize Claude Agent options."""
     from claude_agent_sdk import ClaudeAgentOptions
 
-    return ClaudeAgentOptions(
-        cwd=config.CLAUDE_AGENT_CWD,
-        setting_sources=config.SETTING_SOURCES,
-        allowed_tools=config.ALLOWED_TOOLS,
-        permission_mode=config.PERMISSION_MODE,
-    )
+    options_kwargs = {
+        "cwd": config.CLAUDE_AGENT_CWD,
+        "setting_sources": config.SETTING_SOURCES,
+        "allowed_tools": config.ALLOWED_TOOLS,
+        "permission_mode": config.PERMISSION_MODE,
+    }
+
+    # Add model override if specified
+    if config.CLAUDE_MODEL:
+        options_kwargs["model"] = config.CLAUDE_MODEL
+
+    return ClaudeAgentOptions(**options_kwargs)
 
 
 @app.on_event("startup")
@@ -161,6 +167,15 @@ async def startup_event():
     print("=" * 60)
     print("Claude Agent SDK HTTP Service Starting...")
     print("=" * 60)
+
+    # Log gateway configuration
+    base_url = config.get_base_url()
+    if base_url:
+        print(f"[Config] Using LLM Gateway: {base_url}")
+    if config.CLAUDE_MODEL:
+        print(f"[Config] Model override: {config.CLAUDE_MODEL}")
+    if config.get_gateway_headers():
+        print(f"[Config] Custom headers configured: {list(config.get_gateway_headers().keys())}")
 
     # Step 1: Set up skills directory
     print("\n[Step 1] Setting up skills directory...")

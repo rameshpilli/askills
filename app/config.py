@@ -21,11 +21,38 @@ if env_path.exists():
 class Config:
     """Application configuration loaded from environment variables."""
 
-    # Required
+    # API credentials
     ANTHROPIC_API_KEY: str = os.environ.get("ANTHROPIC_API_KEY", "")
 
-    # Optional: Custom LLM gateway URL (for internal deployments)
+    # Corporate LLM Gateway settings
+    # ANTHROPIC_BASE_URL is the standard env var used by Anthropic SDK
+    ANTHROPIC_BASE_URL: str = os.environ.get("ANTHROPIC_BASE_URL", "")
+
+    # Alternative name for gateway URL (for backwards compatibility)
     LLM_GATEWAY_URL: str = os.environ.get("LLM_GATEWAY_URL", "")
+
+    # Custom headers for gateway authentication (JSON string)
+    # Example: '{"X-Api-Key": "your-key", "X-Tenant-Id": "your-tenant"}'
+    LLM_GATEWAY_HEADERS: str = os.environ.get("LLM_GATEWAY_HEADERS", "")
+
+    # Model override (some gateways use different model names)
+    CLAUDE_MODEL: str = os.environ.get("CLAUDE_MODEL", "")
+
+    @classmethod
+    def get_base_url(cls) -> str:
+        """Get the API base URL (gateway or default Anthropic)."""
+        return cls.ANTHROPIC_BASE_URL or cls.LLM_GATEWAY_URL or ""
+
+    @classmethod
+    def get_gateway_headers(cls) -> dict:
+        """Parse gateway headers from JSON string."""
+        if cls.LLM_GATEWAY_HEADERS:
+            import json
+            try:
+                return json.loads(cls.LLM_GATEWAY_HEADERS)
+            except json.JSONDecodeError:
+                return {}
+        return {}
 
     # Agent settings
     CLAUDE_AGENT_CWD: str = os.environ.get("CLAUDE_AGENT_CWD", "/app")
@@ -55,7 +82,7 @@ class Config:
     @classmethod
     def has_api_credentials(cls) -> bool:
         """Check if API credentials are configured."""
-        return bool(cls.ANTHROPIC_API_KEY or cls.LLM_GATEWAY_URL)
+        return bool(cls.ANTHROPIC_API_KEY or cls.get_base_url())
 
     @classmethod
     def get_claude_dir(cls) -> Path:

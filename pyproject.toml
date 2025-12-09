@@ -5,6 +5,9 @@ description = "Claude Agent SDK with skills support"
 requires-python = ">=3.11"
 dependencies = [
     "claude-agent-sdk",
+    # HTTP service
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
     # PDF skill
     "pdf2image>=1.16.0",
     "PyPDF2>=3.0.0",

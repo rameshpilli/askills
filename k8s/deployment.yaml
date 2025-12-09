@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: claude-agent-skills
+  labels:
+    app: claude-agent-skills
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: claude-agent-skills
+  template:
+    metadata:
+      labels:
+        app: claude-agent-skills
+    spec:
+      containers:
+        - name: claude-agent-skills
+          image: YOUR_REGISTRY/claude-agent-sdk-skills:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          env:
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: anthropic-api-key
+                  key: api_key
+            - name: CLAUDE_AGENT_CWD
+              value: "/app"
+            - name: CLAUDE_AGENT_SKILLS_DIR
+              value: "/app/skills"
+          resources:
+            requests:
+              cpu: "1"
+              memory: "2Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5

@@ -1,6 +1,6 @@
 # Claude Agent SDK Docker Environment
 
-A Docker-based environment for running the Claude Agent SDK with skills.
+A Docker-based HTTP service for running the Claude Agent SDK with skills.
 
 ## Project Structure
 
@@ -9,13 +9,17 @@ AgentSkills/
 ├── Dockerfile
 ├── pyproject.toml
 ├── app/
-│   └── main.py
-└── skills/
-    ├── pdf/
-    ├── xlsx/
-    ├── pptx/
-    ├── docx/
-    └── ... (17 skills total)
+│   └── main.py           # FastAPI HTTP service
+├── skills/               # 17 skills from anthropics/skills
+├── testdata/             # Sample PDFs and Excel files for testing
+│   ├── earnings_report_q3_2024.pdf
+│   ├── product_pricing_2024.pdf
+│   ├── pricing_calculator.xlsx
+│   └── financial_summary_2024.xlsx
+└── k8s/                  # Kubernetes manifests
+    ├── deployment.yaml
+    ├── service.yaml
+    └── secret.yaml
 ```
 
 ## Quick Start
@@ -29,14 +33,55 @@ docker build -t claude-agent-dev .
 ### 2. Run the Container
 
 ```bash
-docker run -it --rm \
+docker run -d --rm \
+  -p 8080:8080 \
   -e ANTHROPIC_API_KEY=your_api_key_here \
   claude-agent-dev
 ```
 
-### 3. Use It
+### 3. Test the API
 
-Type prompts and press Enter. Type `exit` to stop.
+Health check:
+```bash
+curl http://localhost:8080/health
+```
+
+Send a chat message:
+```bash
+curl http://localhost:8080/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What skills are available?"}'
+```
+
+Test with a PDF skill:
+```bash
+curl http://localhost:8080/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Use the pdf skill to describe what it does."}'
+```
+
+## HTTP API
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check, returns skills count |
+| `/chat` | POST | Send message to agent, get reply |
+
+### POST /chat
+
+Request:
+```json
+{
+  "message": "Your prompt here"
+}
+```
+
+Response:
+```json
+{
+  "reply": "Agent response text"
+}
+```
 
 ## Included Skills
 
@@ -67,11 +112,22 @@ From [anthropics/skills](https://github.com/anthropics/skills):
 |----------|----------|-------------|
 | `ANTHROPIC_API_KEY` | Yes | API key for Anthropic |
 | `LLM_GATEWAY_URL` | No | Custom gateway URL |
+| `CLAUDE_AGENT_CWD` | No | Working directory (default: `/app`) |
+| `CLAUDE_AGENT_SKILLS_DIR` | No | Skills source (default: `/app/skills`) |
 
-## Adding Custom Skills
+## Test Data
 
-1. Create a folder in `skills/` with a `SKILL.md` file
-2. Rebuild: `docker build -t claude-agent-dev .`
+Sample files are included in `testdata/` for testing skills:
+
+- `earnings_report_q3_2024.pdf` - Q3 earnings report with financial tables
+- `product_pricing_2024.pdf` - Product pricing guide
+- `pricing_calculator.xlsx` - Pricing tiers and revenue calculator
+- `financial_summary_2024.xlsx` - Quarterly financial data
+
+To regenerate test data:
+```bash
+cd testdata && python create_samples.py
+```
 
 ## How It Works
 
@@ -85,9 +141,8 @@ From [anthropics/skills](https://github.com/anthropics/skills):
 │  │  ┌─────────────────────────────────────────────────┐  │  │
 │  │  │  Container (python:3.11-slim)                   │  │  │
 │  │  │                                                 │  │  │
-│  │  │  • Python 3.11                                  │  │  │
+│  │  │  • Python 3.11 + FastAPI + uvicorn             │  │  │
 │  │  │  • Claude Agent SDK                             │  │  │
-│  │  │  • main.py (your entrypoint)                    │  │  │
 │  │  │  • /app/.claude/skills/* (skill definitions)    │  │  │
 │  │  │  • /bin/bash (for Bash tool)                    │  │  │
 │  │  │                                                 │  │  │
@@ -114,60 +169,61 @@ From [anthropics/skills](https://github.com/anthropics/skills):
 **What goes outside:**
 - Only the API calls to Claude (model inference)
 
-The container is the isolated Linux environment where all skill execution happens. No Anthropic VM involved in this setup.
-
 ## Kubernetes Deployment
 
-Running this image in a Kubernetes pod works for skills. The pod + container together act as your "VM".
+### 1. Build and push image
 
-**Layers:**
+```bash
+docker build -t YOUR_REGISTRY/claude-agent-sdk-skills:v1 .
+docker push YOUR_REGISTRY/claude-agent-sdk-skills:v1
 ```
-Host node → Kubernetes pod → Docker container → Python + Agent SDK + SKILL.md + bash
+
+### 2. Create the secret
+
+```bash
+# Encode your API key
+echo -n "your-api-key" | base64
+
+# Edit k8s/secret.yaml with the encoded value, then apply
+kubectl apply -f k8s/secret.yaml
 ```
 
-Skills run inside that container filesystem exactly like on your laptop.
+### 3. Deploy
 
-### Key pieces for Kubernetes:
+```bash
+# Update k8s/deployment.yaml with your image registry
+kubectl apply -f k8s/deployment.yaml
+kubectl apply -f k8s/service.yaml
+```
 
-**1. Image**
-- Build and push your image to your registry
-- Use that image in a Deployment spec
+### 4. Test in cluster
 
-**2. Environment variables**
-- Set `ANTHROPIC_API_KEY` or gateway variables through a Secret
-- Mount them as env vars in the pod
+```bash
+# Port forward to test locally
+kubectl port-forward deploy/claude-agent-skills 8080:8080
 
-**3. Filesystem for skills**
+# Send a request
+curl http://localhost:8080/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What skills are available?"}'
+```
 
-Option A: Immutable skills baked into image
-- Good for quick tests
-- Build a new image when you update skills
-- No extra volume needed
+### Kubernetes manifests included
 
-Option B: Persistent or config driven skills
-- Use a PersistentVolumeClaim or ConfigMap to mount skills into `/app/skills` or `/app/.claude/skills`
-- Update skills without rebuilding the image
+- `k8s/deployment.yaml` - Deployment with health probes and resource limits
+- `k8s/service.yaml` - ClusterIP service on port 80
+- `k8s/secret.yaml` - Template for API key secret
 
-**4. Network**
-- Cluster nodes need outbound HTTPS to Anthropic or your internal LLM gateway
-- No inbound internet required unless you expose an HTTP API for the agent
+### Resource recommendations
 
-**5. Resources**
-- Start with: `requests: 1 CPU, 2-4 GB RAM`
-- Limits: `2-4 CPU, 8-16 GB RAM`
-- Adjust after observing load
+| Setting | Value |
+|---------|-------|
+| CPU requests | 1 |
+| CPU limits | 2 |
+| Memory requests | 2Gi |
+| Memory limits | 4Gi |
 
-**6. Pod lifecycle**
-- When the pod starts, Dockerfile CMD runs `python main.py`
-- main.py sets cwd to `/app`, wires `setting_sources`, `allowed_tools`, and points skills to `/app/.claude/skills`
-- From there the Agent SDK loads SKILL.md and executes tools inside the pod
-
-Deploy this container to Kubernetes as a standard Deployment. The pod becomes your "VM style" runtime. Skills execute inside the pod container on the cluster node.
-
-
-
-
-You end up with two possible deployments:
+## Local vs Cluster Deployment
 
 ### Local
 

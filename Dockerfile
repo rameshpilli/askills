@@ -50,5 +50,8 @@ ENV CLAUDE_AGENT_SKILLS_DIR=/app/skills
 # The ANTHROPIC_API_KEY should be passed at runtime via docker run -e
 # Do NOT set it here to avoid baking secrets into the image
 
-# Default command: run the main.py entrypoint
-CMD ["python", "main.py"]
+# Expose port for HTTP service
+EXPOSE 8080
+
+# Default command: run FastAPI with uvicorn
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]

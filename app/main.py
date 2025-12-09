@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """
-Claude Agent SDK Entrypoint with Skills Support
+Claude Agent SDK HTTP Service with Skills Support
 
 This script:
 1. Sets up the skills directory structure expected by the Claude Agent SDK
-2. Configures the agent with filesystem-based skills loading
-3. Runs a simple CLI loop for interactive prompts
+2. Exposes a FastAPI HTTP API for interacting with the agent
+3. Supports skills loading from .claude/skills/
+
+Endpoints:
+- POST /chat - Send a message to the agent, get a reply
+- GET /health - Health check endpoint
 
 Skills Wiring:
 - At container build time, skills are copied to /app/skills
@@ -23,6 +27,10 @@ import asyncio
 import os
 import sys
 from pathlib import Path
+from typing import Optional
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 
 
 def setup_skills_directory():
@@ -95,140 +103,135 @@ def setup_skills_directory():
         print(f"[Setup] Loaded {skill_count} skill(s)")
 
 
-async def run_agent_loop():
-    """
-    Run the main agent interaction loop.
+# Pydantic models for API
+class ChatRequest(BaseModel):
+    message: str
 
-    This loop:
-    1. Reads prompts from stdin
-    2. Sends them to the Claude Agent SDK
-    3. Prints responses to stdout
 
-    The agent is configured to:
-    - Load skills from .claude/skills via setting_sources=["user", "project"]
-    - Allow Skill, Read, Write, and Bash tools
-    - Use the working directory from CLAUDE_AGENT_CWD
-    """
-    # Import Claude Agent SDK
+class ChatResponse(BaseModel):
+    reply: str
+
+
+class HealthResponse(BaseModel):
+    status: str
+    skills_loaded: int
+
+
+# FastAPI app
+app = FastAPI(
+    title="Claude Agent SDK Service",
+    description="HTTP API for Claude Agent with Skills support",
+    version="1.0.0",
+)
+
+# Global agent options (initialized on startup)
+agent_options = None
+skills_count = 0
+
+
+def init_agent_options():
+    """Initialize Claude Agent options."""
+    from claude_agent_sdk import ClaudeAgentOptions
+
+    cwd = os.environ.get("CLAUDE_AGENT_CWD", "/app")
+
+    return ClaudeAgentOptions(
+        cwd=cwd,
+        # Load settings and skills from both user and project directories
+        setting_sources=["user", "project"],
+        # Tools available to the agent
+        allowed_tools=["Skill", "Read", "Write", "Bash", "Edit", "Glob", "Grep"],
+        # Accept file edits automatically
+        permission_mode="acceptEdits",
+    )
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize the agent on startup."""
+    global agent_options, skills_count
+
+    print("=" * 60)
+    print("Claude Agent SDK HTTP Service Starting...")
+    print("=" * 60)
+
+    # Step 1: Set up skills directory
+    print("\n[Step 1] Setting up skills directory...")
+    setup_skills_directory()
+
+    # Count skills
+    cwd = os.environ.get("CLAUDE_AGENT_CWD", "/app")
+    claude_skills_dir = Path(cwd) / ".claude" / "skills"
+    if claude_skills_dir.exists():
+        skills_count = len([d for d in claude_skills_dir.iterdir() if d.is_dir() or d.is_symlink()])
+
+    # Step 2: Initialize agent options
+    print("\n[Step 2] Initializing agent options...")
     try:
-        from claude_agent_sdk import (
-            ClaudeSDKClient,
-            ClaudeAgentOptions,
-            AssistantMessage,
-            TextBlock,
-            ToolUseBlock,
-            ResultMessage,
-        )
-    except ImportError:
-        print("Error: claude-agent-sdk is not installed.")
-        print("Install it with: pip install claude-agent-sdk")
-        sys.exit(1)
+        agent_options = init_agent_options()
+        print("[Setup] Agent options initialized successfully")
+    except ImportError as e:
+        print(f"[Error] Failed to import claude_agent_sdk: {e}")
+        print("[Error] Make sure claude-agent-sdk is installed")
+
+    print("\n" + "=" * 60)
+    print(f"Service ready! Skills loaded: {skills_count}")
+    print("=" * 60 + "\n")
+
+
+@app.get("/health", response_model=HealthResponse)
+async def health():
+    """Health check endpoint."""
+    return HealthResponse(
+        status="healthy" if agent_options else "not_initialized",
+        skills_loaded=skills_count,
+    )
+
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat(req: ChatRequest) -> ChatResponse:
+    """
+    Send a message to the Claude agent and get a response.
+
+    The agent has access to all configured skills and can use them
+    to help answer your questions or perform tasks.
+    """
+    from claude_agent_sdk import (
+        query,
+        AssistantMessage,
+        TextBlock,
+    )
+
+    if not agent_options:
+        raise HTTPException(status_code=503, detail="Agent not initialized")
 
     # Check for API key
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     gateway_url = os.environ.get("LLM_GATEWAY_URL")
 
     if not api_key and not gateway_url:
-        print("Error: ANTHROPIC_API_KEY environment variable is not set.")
-        print("Run the container with: docker run -e ANTHROPIC_API_KEY=your_key ...")
-        sys.exit(1)
+        raise HTTPException(
+            status_code=500,
+            detail="ANTHROPIC_API_KEY or LLM_GATEWAY_URL environment variable not set"
+        )
 
-    # Get working directory
-    cwd = os.environ.get("CLAUDE_AGENT_CWD", "/app")
+    # Collect response chunks
+    reply_chunks: list[str] = []
 
-    # Configure the agent
-    # setting_sources=["user", "project"] enables loading skills from .claude/skills/
-    # allowed_tools includes Skill for invoking skills, plus Read/Write/Bash
-    # for skills that need filesystem or shell access
-    options = ClaudeAgentOptions(
-        cwd=cwd,
-        # Load settings and skills from both user and project directories
-        # "user" looks for ~/.claude/settings.json and ~/.claude/skills/
-        # "project" looks for .claude/settings.json and .claude/skills/
-        setting_sources=["user", "project"],
-        # Tools available to the agent
-        # - Skill: invoke custom skills from .claude/skills/
-        # - Read: read files (required by many skills)
-        # - Write: write files (required by many skills)
-        # - Bash: execute shell commands (required by some skills)
-        # - Edit: edit files with string replacement
-        # - Glob: find files by pattern
-        # - Grep: search file contents
-        allowed_tools=["Skill", "Read", "Write", "Bash", "Edit", "Glob", "Grep"],
-        # Accept file edits automatically for smoother operation
-        # Change to "plan" if you want approval prompts
-        permission_mode="acceptEdits",
-    )
+    try:
+        async for msg in query(prompt=req.message, options=agent_options):
+            if isinstance(msg, AssistantMessage):
+                for block in msg.content:
+                    if isinstance(block, TextBlock):
+                        reply_chunks.append(block.text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Agent error: {str(e)}")
 
-    print("\n" + "=" * 60)
-    print("Claude Agent SDK - Interactive Mode")
-    print("=" * 60)
-    print(f"Working directory: {cwd}")
-    print("Type your prompts and press Enter. Type 'exit' or 'quit' to stop.")
-    print("=" * 60 + "\n")
+    full_reply = "".join(reply_chunks) if reply_chunks else "No response from agent"
 
-    # Use ClaudeSDKClient for multi-turn conversation support
-    async with ClaudeSDKClient(options=options) as client:
-        while True:
-            try:
-                # Read prompt from stdin
-                print("You: ", end="", flush=True)
-                prompt = input().strip()
-
-                # Check for exit commands
-                if prompt.lower() in ("exit", "quit", "q"):
-                    print("Goodbye!")
-                    break
-
-                # Skip empty prompts
-                if not prompt:
-                    continue
-
-                # Send prompt to agent
-                await client.query(prompt)
-
-                # Process and print response
-                print("\nClaude: ", end="", flush=True)
-                async for message in client.receive_response():
-                    if isinstance(message, AssistantMessage):
-                        for block in message.content:
-                            if isinstance(block, TextBlock):
-                                print(block.text, end="", flush=True)
-                            elif isinstance(block, ToolUseBlock):
-                                # Show tool usage for transparency
-                                print(f"\n[Using tool: {block.name}]", flush=True)
-                    elif isinstance(message, ResultMessage):
-                        # Show completion stats
-                        if message.total_cost_usd:
-                            print(f"\n[Cost: ${message.total_cost_usd:.4f}]", end="")
-
-                print("\n")  # Newline after response
-
-            except KeyboardInterrupt:
-                print("\n\nInterrupted. Goodbye!")
-                break
-            except EOFError:
-                print("\n\nEnd of input. Goodbye!")
-                break
-            except Exception as e:
-                print(f"\nError: {e}")
-                print("Try again or type 'exit' to quit.\n")
-
-
-def main():
-    """Main entry point."""
-    print("=" * 60)
-    print("Claude Agent SDK Container Starting...")
-    print("=" * 60)
-
-    # Step 1: Set up skills directory structure
-    print("\n[Step 1] Setting up skills directory...")
-    setup_skills_directory()
-
-    # Step 2: Run the agent loop
-    print("\n[Step 2] Starting agent...")
-    asyncio.run(run_agent_loop())
+    return ChatResponse(reply=full_reply)
 
 
 if __name__ == "__main__":
-    main()
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8080)

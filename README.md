@@ -273,7 +273,7 @@ kubectl apply -f k8s/secret.yaml
 ### 3. Deploy
 
 ```bash
-# Update k8s/deployment.yaml with your image registry
+ # Update k8s/deployment.yaml with your image registry
 kubectl apply -f k8s/deployment.yaml
 kubectl apply -f k8s/service.yaml
 ```
@@ -375,3 +375,57 @@ curl http://localhost:8080/chat \
 - Step 4 runs entirely inside your container - no external calls
 - The PDF file never leaves your container
 - Only the extracted text/analysis goes to Claude
+
+
+
+How to Explain AgentSkills to Someone
+The Problem We're Solving
+"We can't get access to Claude BM (Anthropic's managed sandbox environment) which provides an isolated code execution environment with file system access, command execution, and LLM connectivity out of the box."
+Our Solution
+"So we're building our own isolated execution environment using Docker."
+Simple Explanation (Elevator Pitch)
+"We package everything Claude needs to run skills — Python, file system, bash, PDF tools — into a Docker container. The container talks to Claude through our LLM Gateway. Skills execute inside the container, and only API calls go out to Claude. It's like building our own mini Claude BM."
+Visual Explanation
+┌─────────────────────────────────────────────────────────┐
+│  Docker Container (Our "Claude BM" Replacement)         │
+│                                                         │
+│  ┌───────────────────────────────────────────────────┐  │
+│  │  What's Inside:                                   │  │
+│  │  • Python 3.11 + FastAPI                          │  │
+│  │  • Claude Agent SDK                               │  │
+│  │  • 17 Skills (pdf, xlsx, pptx, etc.)              │  │
+│  │  • Bash shell for command execution               │  │
+│  │  • File system access (/app/*)                    │  │
+│  │  • System tools (LibreOffice, poppler, etc.)      │  │
+│  └───────────────────────────────────────────────────┘  │
+│                           │                             │
+│      Skills run HERE      │  Only API calls leave       │
+│      (isolated)           │                             │
+└───────────────────────────┼─────────────────────────────┘
+                            │ HTTPS
+                            ▼
+                 ┌─────────────────────┐
+                 │  LLM Gateway        │
+                 │  (Corporate Proxy)  │
+                 └─────────────────────┘
+                            │
+                            ▼
+                 ┌─────────────────────┐
+                 │  Claude API         │
+                 └─────────────────────┘
+Key Points to Emphasize
+What	How We Do It
+Isolated execution	Docker container = sandbox
+File system access	Container has /app/ with full read/write
+Command execution	Bash tool runs commands inside container
+LLM connectivity	Routes through LLM_GATEWAY_URL (corporate proxy)
+Skills	Packaged in container at /app/skills/
+What Stays Inside vs. What Goes Out
+Inside Container (Private)	Goes to LLM Gateway (External)
+File contents (PDFs, Excel)	Prompts and extracted text
+Bash command execution	Model inference requests
+Skill logic execution	Claude's responses
+All file I/O	Nothing else
+One-Liner for Execs
+"Since we can't use Claude's managed sandbox, we built our own using Docker — skills run in an isolated container, and only LLM API calls go through our corporate gateway."
+Does this help? Want me to create a more formal documentation page or diagram for this?
